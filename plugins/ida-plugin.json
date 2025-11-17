@@ -2,7 +2,7 @@
     "IDAMetadataDescriptorVersion": 1,
     "plugin": {
         "name": "lighthouse",
-        "entryPoint": "lighthouse_plugin",
+        "entryPoint": "lighthouse_plugin.py",
         "categories": ["decompilation", "deobfuscation", "malware-analysis"],
         "idaVersions": ">=9.0",
         "description": "A Coverage Explorer for Reverse Engineers",
