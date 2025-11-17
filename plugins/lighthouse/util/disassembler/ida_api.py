@@ -1,10 +1,10 @@
+import binascii
+import functools
+import logging
 import os
 import sys
-import time
-import logging
-import binascii
 import tempfile
-import functools
+import time
 
 import idaapi
 import idautils
@@ -13,15 +13,16 @@ if int(idaapi.get_kernel_version()[0]) < 7:
     idaapi.warning("Lighthouse has deprecated support for IDA 6, please upgrade.")
     raise ImportError
 
-from .api import DisassemblerCoreAPI, DisassemblerContextAPI
+from ..misc import get_string_between, is_mainthread
 from ..qt import *
-from ..misc import is_mainthread, get_string_between
+from .api import DisassemblerContextAPI, DisassemblerCoreAPI
 
 logger = logging.getLogger("Lighthouse.API.IDA")
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Utils
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
 
 def execute_sync(function, sync_type):
     """
@@ -51,11 +52,14 @@ def execute_sync(function, sync_type):
 
         # return the output of the synchronized execution
         return output[0]
+
     return wrapper
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Disassembler Core API (universal)
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
 
 class IDACoreAPI(DisassemblerCoreAPI):
     NAME = "IDA"
@@ -77,17 +81,17 @@ class IDACoreAPI(DisassemblerCoreAPI):
         self._version_minor = minor
         self._version_patch = 0
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # Properties
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     @property
     def headless(self):
         return idaapi.cvar.batch
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # Synchronization Decorators
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     @staticmethod
     def execute_read(function):
@@ -101,9 +105,9 @@ class IDACoreAPI(DisassemblerCoreAPI):
     def execute_ui(function):
         return execute_sync(function, idaapi.MFF_FAST)
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # API Shims
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     def get_disassembler_user_directory(self):
         return idaapi.get_user_idadir()
@@ -142,9 +146,9 @@ class IDACoreAPI(DisassemblerCoreAPI):
     def message(self, message):
         print(message)
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # UI API Shims
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     def register_dockable(self, dockable_name, create_widget_callback):
         self._dockable_factory[dockable_name] = create_widget_callback
@@ -170,18 +174,24 @@ class IDACoreAPI(DisassemblerCoreAPI):
         except KeyError:
             return False
 
-        parent, dctx = None, None # not used for IDA's integration
+        parent, dctx = None, None  # not used for IDA's integration
         widget = make_dockable(dockable_name, parent, dctx)
 
         # get the original twidget, so we can use it with the IDA API's
-        #twidget = idaapi.TWidget__from_ptrval__(widget) NOTE: IDA 7.2+ only...
+        # twidget = idaapi.TWidget__from_ptrval__(widget) NOTE: IDA 7.2+ only...
         twidget = self._dockable_widgets.pop(dockable_name)
         if not twidget:
-            self.warning("Could not open dockable window, because its reference is gone?!?")
+            self.warning(
+                "Could not open dockable window, because its reference is gone?!?"
+            )
             return
 
         # show the dockable widget
-        flags = idaapi.PluginForm.WOPN_TAB | idaapi.PluginForm.WOPN_RESTORE | idaapi.PluginForm.WOPN_PERSIST
+        flags = (
+            idaapi.PluginForm.WOPN_TAB
+            | idaapi.PluginForm.WOPN_RESTORE
+            | idaapi.PluginForm.WOPN_PERSIST
+        )
         idaapi.display_widget(twidget, flags)
         widget.visible = True
 
@@ -189,15 +199,15 @@ class IDACoreAPI(DisassemblerCoreAPI):
         for target in ["IDA View-A", "Pseudocode-A"]:
             dwidget = idaapi.find_widget(target)
             if dwidget:
-                idaapi.set_dock_pos(dockable_name, 'IDA View-A', idaapi.DP_RIGHT)
+                idaapi.set_dock_pos(dockable_name, "IDA View-A", idaapi.DP_RIGHT)
                 break
 
     def hide_dockable(self, dockable_name):
-        pass # TODO/IDA: this should never actually be called by lighthouse right now
+        pass  # TODO/IDA: this should never actually be called by lighthouse right now
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # Theme Prediction Helpers (Internal)
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     def _get_ida_bg_color_from_file(self):
         """
@@ -215,7 +225,7 @@ class IDACoreAPI(DisassemblerCoreAPI):
         #
 
         imagebase = idaapi.get_imagebase()
-        #if imagebase == idaapi.BADADDR:
+        # if imagebase == idaapi.BADADDR:
         #    logger.debug(" - No imagebase...")
         #    return None
 
@@ -225,7 +235,9 @@ class IDACoreAPI(DisassemblerCoreAPI):
 
         # attempt to generate an 'html' dump of the first 0x20 bytes (instructions)
         ida_fd = idaapi.fopenWT(path)
-        idaapi.gen_file(idaapi.OFILE_LST, ida_fd, imagebase, imagebase+0x20, idaapi.GENFLG_GENHTML)
+        idaapi.gen_file(
+            idaapi.OFILE_LST, ida_fd, imagebase, imagebase + 0x20, idaapi.GENFLG_GENHTML
+        )
         idaapi.eclose(ida_fd)
 
         # read the dumped text
@@ -253,15 +265,21 @@ class IDACoreAPI(DisassemblerCoreAPI):
         # in favor of c41 (line-bg-default) as that's what we really want
         #
 
-        bg_color_text = get_string_between(html, '.c1 \{ background-color: ', ';')
+        bg_color_text = get_string_between(html, r".c1 \{ background-color: ", ";")
         if bg_color_text:
-            logger.debug(" - Extracted background-color '%s' from line-fg-default!" % bg_color_text)
+            logger.debug(
+                " - Extracted background-color '%s' from line-fg-default!"
+                % bg_color_text
+            )
             return QtGui.QColor(bg_color_text)
 
         # -- IDA 7.5 says c41 is /* line-bg-default */, a.k.a the bg color for disassembly text
-        bg_color_text = get_string_between(html, '.c41 \{ background-color: ', ';')
+        bg_color_text = get_string_between(html, r".c41 \{ background-color: ", ";")
         if bg_color_text:
-            logger.debug(" - Extracted background-color '%s' from line-bg-default!" % bg_color_text)
+            logger.debug(
+                " - Extracted background-color '%s' from line-bg-default!"
+                % bg_color_text
+            )
             return QtGui.QColor(bg_color_text)
 
         logger.debug(" - HTML color regex failed...")
@@ -274,9 +292,9 @@ class IDACoreAPI(DisassemblerCoreAPI):
         """
         logger.debug("Attempting to get IDA disassembly background color from view...")
 
-        names  = ["Enums", "Structures"]
+        names = ["Enums", "Structures"]
         names += ["Hex View-%u" % i for i in range(5)]
-        names += ["IDA View-%c" % chr(ord('A') + i) for i in range(5)]
+        names += ["IDA View-%c" % chr(ord("A") + i) for i in range(5)]
 
         # find a form (eg, IDA view) to analyze colors from
         for window_name in names:
@@ -292,6 +310,7 @@ class IDACoreAPI(DisassemblerCoreAPI):
 
         # locate the Qt Widget for a form and take 1px image slice of it
         import sip
+
         widget = sip.wrapinstance(int(twidget), QtWidgets.QWidget)
         pixmap = widget.grab(QtCore.QRect(0, 10, widget.width(), 1))
 
@@ -331,9 +350,11 @@ class IDACoreAPI(DisassemblerCoreAPI):
         idaapi.activate_widget(previous_twidget, True)
         flush_qt_events()
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Disassembler Context API (database-specific)
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
 
 class IDAContextAPI(DisassemblerContextAPI):
 
@@ -342,11 +363,11 @@ class IDAContextAPI(DisassemblerContextAPI):
 
     @property
     def busy(self):
-        return not(idaapi.auto_is_ok())
+        return not (idaapi.auto_is_ok())
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # API Shims
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     @IDACoreAPI.execute_read
     def get_current_address(self):
@@ -379,22 +400,24 @@ class IDAContextAPI(DisassemblerContextAPI):
     def set_function_name_at(self, function_address, new_name):
         idaapi.set_name(function_address, new_name, idaapi.SN_NOWARN)
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # Hooks API
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     def create_rename_hooks(self):
         return RenameHooks()
 
-    #------------------------------------------------------------------------------
+    # ------------------------------------------------------------------------------
     # Function Prefix API
-    #------------------------------------------------------------------------------
+    # ------------------------------------------------------------------------------
 
     PREFIX_SEPARATOR = "%"
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Hooking
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
 
 class RenameHooks(idaapi.IDB_Hooks):
 
@@ -421,9 +444,11 @@ class RenameHooks(idaapi.IDB_Hooks):
         """
         pass
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # HexRays Util
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
 
 def hexrays_available():
     """
@@ -431,9 +456,11 @@ def hexrays_available():
     """
     try:
         import ida_hexrays
+
         return ida_hexrays.init_hexrays_plugin()
     except ImportError:
         return False
+
 
 def map_line2citem(decompilation_text):
     """
@@ -464,9 +491,10 @@ def map_line2citem(decompilation_text):
     for line_number in xrange(decompilation_text.size()):
         line_text = decompilation_text[line_number].line
         line2citem[line_number] = lex_citem_indexes(line_text)
-        #logger.debug("Line Text: %s" % binascii.hexlify(line_text))
+        # logger.debug("Line Text: %s" % binascii.hexlify(line_text))
 
     return line2citem
+
 
 def map_line2node(cfunc, metadata, line2citem):
     """
@@ -521,7 +549,7 @@ def map_line2node(cfunc, metadata, line2citem):
 
             # address not mapped to a node... weird. continue to the next citem
             if not node:
-                #logger.warning("Failed to map node to basic block")
+                # logger.warning("Failed to map node to basic block")
                 continue
 
             #
@@ -541,6 +569,7 @@ def map_line2node(cfunc, metadata, line2citem):
 
     # all done, return the computed map
     return line2node
+
 
 def lex_citem_indexes(line):
     """
@@ -578,7 +607,7 @@ def lex_citem_indexes(line):
                 # in this context, it is actually the index number of a citem
                 #
 
-                citem_index = int(line[i:i+idaapi.COLOR_ADDR_SIZE], 16)
+                citem_index = int(line[i : i + idaapi.COLOR_ADDR_SIZE], 16)
                 i += idaapi.COLOR_ADDR_SIZE
 
                 # save the extracted citem index
@@ -592,4 +621,3 @@ def lex_citem_indexes(line):
 
     # return all the citem indexes extracted from this line of text
     return indexes
-
